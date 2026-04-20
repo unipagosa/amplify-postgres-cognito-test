@@ -25,7 +25,7 @@ export default function App() {
     try {
       const res = await fetch(`${API_URL}/todos`);
       const data = await res.json();
-      setTodos(data);
+      setTodos(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error("Failed to fetch todos:", err);
     }
