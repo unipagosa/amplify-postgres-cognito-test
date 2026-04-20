@@ -15,14 +15,13 @@ const backend = defineBackend({
   auth,
 });
 
-// --- Aurora Postgres ---
-const auroraStack = backend.createStack("AuroraPostgresStack");
-const aurora = new AuroraPostgresConstruct(auroraStack, "AuroraPostgres");
-
-// --- API Stack ---
+// Single stack for Aurora + API to avoid circular dependencies
 const apiStack = backend.createStack("TodoApiStack");
 
-// Lambda function for CRUD operations
+// --- Aurora Postgres ---
+const aurora = new AuroraPostgresConstruct(apiStack, "AuroraPostgres");
+
+// --- Lambda function for CRUD operations ---
 const todosFunction = new nodejs.NodejsFunction(apiStack, "TodosFunction", {
   runtime: lambda.Runtime.NODEJS_20_X,
   entry: path.join(__dirname, "functions", "todos", "handler.ts"),
@@ -39,7 +38,7 @@ const todosFunction = new nodejs.NodejsFunction(apiStack, "TodosFunction", {
 // Grant Lambda permission to use the Data API and read the secret
 aurora.cluster.grantDataApiAccess(todosFunction);
 
-// HTTP API (API Gateway v2)
+// --- HTTP API (API Gateway v2) ---
 const httpApi = new apigatewayv2.HttpApi(apiStack, "TodoHttpApi", {
   apiName: "TodoApi",
   corsPreflight: {
