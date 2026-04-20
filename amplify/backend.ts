@@ -37,7 +37,6 @@ const todosFunction = new nodejs.NodejsFunction(apiStack, "TodosFunction", {
 
 // Grant Lambda permission to use the Data API and read the secret
 aurora.cluster.grantDataApiAccess(todosFunction);
-aurora.encryptionKey.grantDecrypt(todosFunction);
 
 // --- HTTP API (API Gateway v2) ---
 const httpApi = new apigatewayv2.HttpApi(apiStack, "TodoHttpApi", {

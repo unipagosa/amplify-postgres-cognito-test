@@ -1,7 +1,5 @@
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as rds from "aws-cdk-lib/aws-rds";
-import * as kms from "aws-cdk-lib/aws-kms";
-import * as iam from "aws-cdk-lib/aws-iam";
 import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
 
@@ -9,7 +7,6 @@ export class AuroraPostgresConstruct extends Construct {
   public readonly cluster: rds.DatabaseCluster;
   public readonly vpc: ec2.Vpc;
   public readonly dbSecurityGroup: ec2.SecurityGroup;
-  public readonly encryptionKey: kms.Key;
 
   constructor(scope: Construct, id: string) {
     super(scope, id);
@@ -48,37 +45,14 @@ export class AuroraPostgresConstruct extends Construct {
       "Allow Postgres access from within VPC"
     );
 
-    // KMS key for encrypting the database secret (required by Control Tower)
-    this.encryptionKey = new kms.Key(this, "AuroraSecretKey", {
-      description: "KMS key for Aurora Postgres credentials",
-      enableKeyRotation: true,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-    });
-
-    // Allow RDS to use the key (needed for Data API to decrypt the secret)
-    this.encryptionKey.addToResourcePolicy(
-      new iam.PolicyStatement({
-        actions: [
-          "kms:Decrypt",
-          "kms:DescribeKey",
-          "kms:Encrypt",
-          "kms:GenerateDataKey*",
-          "kms:ReEncrypt*",
-        ],
-        principals: [new iam.ServicePrincipal("rds.amazonaws.com")],
-        resources: ["*"],
-      })
-    );
-
     // Aurora Serverless v2 Postgres cluster
+    // Uses the default AWS-managed encryption key for Secrets Manager
+    // which the Data API can access without extra KMS grants
     this.cluster = new rds.DatabaseCluster(this, "AuroraPostgresCluster", {
       engine: rds.DatabaseClusterEngine.auroraPostgres({
         version: rds.AuroraPostgresEngineVersion.VER_16_4,
       }),
-      credentials: rds.Credentials.fromGeneratedSecret("dbadmin", {
-        encryptionKey: this.encryptionKey,
-      }),
-      storageEncryptionKey: this.encryptionKey,
+      credentials: rds.Credentials.fromGeneratedSecret("dbadmin"),
       defaultDatabaseName: "amplifydb",
       serverlessV2MinCapacity: 0.5,
       serverlessV2MaxCapacity: 2,
