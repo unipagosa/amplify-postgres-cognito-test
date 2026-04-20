@@ -1,5 +1,6 @@
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as rds from "aws-cdk-lib/aws-rds";
+import * as kms from "aws-cdk-lib/aws-kms";
 import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
 
@@ -45,6 +46,13 @@ export class AuroraPostgresConstruct extends Construct {
       "Allow Postgres access from within VPC"
     );
 
+    // KMS key for encrypting the database secret (required by Control Tower)
+    const secretEncryptionKey = new kms.Key(this, "AuroraSecretKey", {
+      description: "KMS key for Aurora Postgres credentials",
+      enableKeyRotation: true,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     // Aurora Serverless v2 Postgres cluster
     this.cluster = new rds.DatabaseCluster(this, "AuroraPostgresCluster", {
       engine: rds.DatabaseClusterEngine.auroraPostgres({
@@ -52,7 +60,9 @@ export class AuroraPostgresConstruct extends Construct {
       }),
       credentials: rds.Credentials.fromGeneratedSecret("dbadmin", {
         secretName: "amplify-aurora-postgres-credentials",
+        encryptionKey: secretEncryptionKey,
       }),
+      storageEncryptionKey: secretEncryptionKey,
       defaultDatabaseName: "amplifydb",
       serverlessV2MinCapacity: 0.5,
       serverlessV2MaxCapacity: 2,
