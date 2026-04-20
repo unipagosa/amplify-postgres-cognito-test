@@ -59,7 +59,6 @@ export class AuroraPostgresConstruct extends Construct {
         version: rds.AuroraPostgresEngineVersion.VER_16_4,
       }),
       credentials: rds.Credentials.fromGeneratedSecret("dbadmin", {
-        secretName: "amplify-aurora-postgres-credentials",
         encryptionKey: secretEncryptionKey,
       }),
       storageEncryptionKey: secretEncryptionKey,
