@@ -5,6 +5,7 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as apigatewayv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
+import * as cr from "aws-cdk-lib/custom-resources";
 import * as cdk from "aws-cdk-lib";
 import * as path from "path";
 import { fileURLToPath } from "url";
@@ -85,5 +86,34 @@ new cdk.CfnOutput(apiStack, "TodoApiUrl", {
 backend.addOutput({
   custom: {
     todoApiUrl: httpApi.apiEndpoint,
+  },
+});
+
+// --- Auto-migration: runs SQL on every deploy ---
+const migrateFunction = new nodejs.NodejsFunction(apiStack, "MigrateFunction", {
+  runtime: lambda.Runtime.NODEJS_20_X,
+  entry: path.join(__dirname, "functions", "migrate", "handler.ts"),
+  handler: "handler",
+  environment: {
+    CLUSTER_ARN: aurora.cluster.clusterArn,
+    SECRET_ARN: aurora.cluster.secret?.secretArn || "",
+    DATABASE_NAME: "amplifydb",
+  },
+  timeout: cdk.Duration.minutes(2),
+  memorySize: 256,
+});
+
+aurora.cluster.grantDataApiAccess(migrateFunction);
+
+// Custom resource triggers the migration Lambda on every deploy
+const migrationProvider = new cr.Provider(apiStack, "MigrationProvider", {
+  onEventHandler: migrateFunction,
+});
+
+new cdk.CustomResource(apiStack, "RunMigration", {
+  serviceToken: migrationProvider.serviceToken,
+  // Change this value to force re-run on next deploy
+  properties: {
+    version: "1",
   },
 });
