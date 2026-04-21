@@ -1,36 +1,63 @@
 /**
  * Run the database migration against Aurora using the Data API.
- * 
+ *
  * Usage:
- *   node scripts/run-migration.mjs
+ *   node scripts/run-migration.mjs                          # auto-detects the Amplify stack
+ *   node scripts/run-migration.mjs <stack-name>             # specify stack name
+ *   CLUSTER_ARN=... SECRET_ARN=... node scripts/run-migration.mjs  # specify ARNs directly
  */
 
 import { RDSDataClient, ExecuteStatementCommand } from "@aws-sdk/client-rds-data";
-import { CloudFormationClient, ListStackResourcesCommand, DescribeStacksCommand } from "@aws-sdk/client-cloudformation";
+import {
+  CloudFormationClient,
+  ListStacksCommand,
+  ListStackResourcesCommand,
+  DescribeStacksCommand,
+} from "@aws-sdk/client-cloudformation";
 
-const STACK_NAME = "amplify-awsamplifygen2-fgil-sandbox-32db6ee9eb";
 const DATABASE = "amplifydb";
 
-async function getOutputsFromNestedStack() {
+async function findAmplifyStack() {
   const cf = new CloudFormationClient({});
-  
-  const resources = await cf.send(new ListStackResourcesCommand({ StackName: STACK_NAME }));
-  const auroraStack = resources.StackResourceSummaries?.find(r => 
-    r.LogicalResourceId?.includes("AuroraPostgresStack")
+  const res = await cf.send(
+    new ListStacksCommand({
+      StackStatusFilter: ["CREATE_COMPLETE", "UPDATE_COMPLETE"],
+    })
   );
-  
-  if (!auroraStack?.PhysicalResourceId) {
-    throw new Error("Could not find AuroraPostgresStack nested stack");
+  const stacks = res.StackSummaries.filter(
+    (s) => s.StackName.includes("amplify-") && !s.StackName.includes("sandbox")
+  );
+  if (stacks.length === 0) {
+    throw new Error("No Amplify production stack found. Pass the stack name as an argument.");
+  }
+  if (stacks.length > 1) {
+    console.log("Multiple Amplify stacks found:");
+    stacks.forEach((s) => console.log(`  - ${s.StackName}`));
+    console.log(`Using: ${stacks[0].StackName}`);
+  }
+  return stacks[0].StackName;
+}
+
+async function getArnsFromStack(stackName) {
+  const cf = new CloudFormationClient({});
+
+  const resources = await cf.send(new ListStackResourcesCommand({ StackName: stackName }));
+  const todoStack = resources.StackResourceSummaries?.find((r) =>
+    r.LogicalResourceId?.includes("TodoApiStack")
+  );
+
+  if (!todoStack?.PhysicalResourceId) {
+    throw new Error(`Could not find TodoApiStack in ${stackName}`);
   }
 
-  const stackDetails = await cf.send(new DescribeStacksCommand({ 
-    StackName: auroraStack.PhysicalResourceId 
-  }));
-  
-  const outputs = stackDetails.Stacks?.[0]?.Outputs || [];
-  const clusterArn = outputs.find(o => o.OutputKey?.includes("ClusterArn"))?.OutputValue;
-  const secretArn = outputs.find(o => o.OutputKey?.includes("SecretArn"))?.OutputValue;
-  
+  const details = await cf.send(
+    new DescribeStacksCommand({ StackName: todoStack.PhysicalResourceId })
+  );
+
+  const outputs = details.Stacks?.[0]?.Outputs || [];
+  const clusterArn = outputs.find((o) => o.OutputKey?.includes("ClusterArn"))?.OutputValue;
+  const secretArn = outputs.find((o) => o.OutputKey?.includes("SecretArn"))?.OutputValue;
+
   return { clusterArn, secretArn };
 }
 
@@ -39,8 +66,9 @@ async function main() {
   let secretArn = process.env.SECRET_ARN;
 
   if (!clusterArn || !secretArn) {
-    console.log("Fetching ARNs from CloudFormation...");
-    const arns = await getOutputsFromNestedStack();
+    const stackName = process.argv[2] || (await findAmplifyStack());
+    console.log(`Using stack: ${stackName}`);
+    const arns = await getArnsFromStack(stackName);
     clusterArn = arns.clusterArn;
     secretArn = arns.secretArn;
   }
@@ -51,11 +79,10 @@ async function main() {
   }
 
   console.log(`Cluster ARN: ${clusterArn}`);
-  console.log(`Secret ARN: ${secretArn}`);
+  console.log(`Secret ARN:  ${secretArn}`);
 
   const rds = new RDSDataClient({});
 
-  // Run each SQL statement individually (Data API requires single statements)
   const statements = [
     `CREATE TABLE IF NOT EXISTS todo (
       id SERIAL PRIMARY KEY,
@@ -72,12 +99,14 @@ async function main() {
   for (const sql of statements) {
     console.log(`\nExecuting: ${sql.substring(0, 80)}...`);
     try {
-      await rds.send(new ExecuteStatementCommand({
-        resourceArn: clusterArn,
-        secretArn: secretArn,
-        database: DATABASE,
-        sql,
-      }));
+      await rds.send(
+        new ExecuteStatementCommand({
+          resourceArn: clusterArn,
+          secretArn: secretArn,
+          database: DATABASE,
+          sql,
+        })
+      );
       console.log("  ✓ Success");
     } catch (err) {
       console.error(`  ✗ Error: ${err.message}`);
